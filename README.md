@@ -1,3 +1,13 @@
+### Table Of Contents
+
+[Welcome to OpenC3 COSMOS](#welcome-to-openc3-cosmos)
+
+[Getting Started](#getting-started)
+
+[Contributing](#contributing)
+
+[Licence](#license)
+
 ## Welcome to OpenC3 COSMOS
 
 > "Open Source, Open Architecture - Command, Control and Communication"
@@ -74,6 +84,15 @@ YOU MUST AGREE TO OUR CONTRIBUTOR LICENSE AGREEMENT TO SUBMIT CODE TO THIS PROJE
 Most importantly:
 
 FOR ALL CONTRIBUTIONS TO THE OPENC3 COSMOS PROJECT, OPENC3, INC. MAINTAINS ALL RIGHTS TO ALL CODE CONTRIBUTED TO THE OPENC3 PROJECT INCLUDING THE RIGHT TO LICENSE IT UNDER OTHER TERMS.
+
+### Contributing Guidelines
+
+1. Write clear and concise code: use descriptive function and variable names, and comment your code where necessary.
+2. Test your changes: before submitting a pull request, ensure your changes work as intended and do not introduce any new bugs.
+3. Document your changes: document any changes you make to the codebase so others can understand the purpose and functionality of your changes.
+4. Provide a clear description: when submitting a pull request, provide a clear description of your changes and why you are making them.
+5. Be open to feedback: listen to feedback and be willing to incorporate it into your contributions. 
+
 
 ## License
 
