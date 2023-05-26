@@ -393,6 +393,195 @@ module OpenC3
           ["            end\n", false, false, 5]
         )
       end
+
+      it "handles a line break in a cmd" do
+        text = <<~DOC
+          cmd("INST COLLECT with TYPE \#{type},
+            DURATION \#{duration}")
+        DOC
+        expect { |b| @lex.each_lexed_segment(text, &b) }.to yield_successive_args(
+          ["cmd(\"INST COLLECT with TYPE \#{type},\n  DURATION \#{duration}\")\n", true, false, 1],
+        )
+      end
+
+      it "handles multiple lines included string interpolation" do
+        text = <<~DOC
+          definition = "
+            SCREEN AUTO AUTO 1.0
+              VERTICALBOX 'Test Screen'
+              LABELVALUE \#{target} \#{packet} \#{item}
+            END"
+        DOC
+        expect { |b| @lex.each_lexed_segment(text, &b) }.to yield_successive_args(
+          ["definition = \"\n  SCREEN AUTO AUTO 1.0\n    VERTICALBOX 'Test Screen'\n    LABELVALUE \#{target} \#{packet} \#{item}\n  END\"\n", true, false, 1]
+        )
+      end
+
+      it "handles block beginnings" do
+        text = <<~DOC
+          array = [1, 2, 3]
+          array.each do |value|
+            puts value
+          end
+          array.each {
+            puts "an item"
+          }
+          begin
+            puts "another"
+          rescue Exception => err
+            puts err
+          end
+          begin; puts "in begin"
+          rescue; puts "in rescue"
+          end
+        DOC
+        expect { |b| @lex.each_lexed_segment(text, &b) }.to yield_successive_args(
+          ["array = [1, 2, 3]\n", true, false, 1],
+          ["array.each do |value|\n", false, false, 2],
+          ["  puts value\n", true, false, 3],
+          ["end\n", false, false, 4],
+          ["array.each {\n  puts \"an item\"\n}\n", false, false, 5],
+          ["begin\n  puts \"another\"\nrescue Exception => err\n  puts err\nend\n", false, false, 8],
+          ["begin; puts \"in begin\"\nrescue; puts \"in rescue\"\nend\n", false, false, 13],
+        )
+      end
+
+      it "has reasonable performance" do
+        #require 'ruby-prof'
+
+        # profile the code
+        #RubyProf.start
+
+        text1 = "class MyBigClass\n"
+        text3 = "end\n"
+
+        big_text = text1
+        1000.times do |count|
+          text2 = <<~DOC
+            def a_great_method_#{count} (arg1, arg2, key: true)
+              if key
+                return arg1 + arg2
+              else
+                begin
+                  if (arg1 / arg2) > arg2
+                    raise "Oh No!"
+                  end
+                rescue
+                  puts "Oh well"
+                end
+              end
+            end
+          DOC
+
+          big_text << text2
+        end
+        big_text << text3
+        line_count = big_text.count("\n")
+
+        start_time = Time.now
+        filename = 'test.rb'
+
+        # Below matches use in ScriptRunner's running_script#instrument_script_implementation
+        instrumented_text = ''
+        @lex.each_lexed_segment(big_text) do |segment, instrumentable, inside_begin, line_no|
+          instrumented_line = ''
+          if instrumentable
+            # Add a newline if it's empty to ensure the instrumented code has
+            # the same number of lines as the original script. Note that the
+            # segment could have originally had comments but they were stripped in
+            # ruby_lex_utils.remove_comments
+            if segment.strip.empty?
+              instrumented_text << "\n"
+              next
+            end
+
+            # Create a variable to hold the segment's return value
+            instrumented_line << "__return_val = nil; "
+
+            # If not inside a begin block then create one to catch exceptions
+            unless inside_begin
+              instrumented_line << 'begin; '
+            end
+
+            # Add preline instrumentation
+            instrumented_line << "RunningScript.instance.script_binding = binding(); "\
+              "RunningScript.instance.pre_line_instrumentation('#{filename}', #{line_no}); "
+
+            # Add the actual line
+            instrumented_line << "__return_val = begin; "
+            instrumented_line << segment
+            instrumented_line.chomp!
+
+            # Add postline instrumentation
+            instrumented_line << " end; RunningScript.instance.post_line_instrumentation('#{filename}', #{line_no}); "
+
+            # Complete begin block to catch exceptions
+            unless inside_begin
+              instrumented_line << "rescue Exception => eval_error; "\
+              "retry if RunningScript.instance.exception_instrumentation(eval_error, '#{filename}', #{line_no}); end; "
+            end
+
+            instrumented_line << " __return_val\n"
+          else
+            unless segment =~ /^\s*end\s*$/ or segment =~ /^\s*when .*$/
+              num_left_brackets = segment.count('{')
+              num_right_brackets = segment.count('}')
+              num_left_square_brackets = segment.count('[')
+              num_right_square_brackets = segment.count(']')
+
+              if (num_right_brackets > num_left_brackets) ||
+                (num_right_square_brackets > num_left_square_brackets)
+                instrumented_line = segment
+              else
+                instrumented_line = "RunningScript.instance.pre_line_instrumentation('#{filename}', #{line_no}); " + segment
+              end
+            else
+              instrumented_line = segment
+            end
+          end
+
+          instrumented_text << instrumented_line
+        end
+
+        end_time = Time.now
+
+        # ... code to profile ...
+        #result = RubyProf.stop
+
+        # print a flat profile to text
+        #printer = RubyProf::FlatPrinter.new(result)
+        #printer.print(STDOUT)
+
+        # puts "Instrumented #{line_count} lines in #{end_time - start_time} seconds"
+        expect(end_time - start_time).to be <= 5.0
+      end
+
+      it "has reasonable performance test 2" do
+        tf = Tempfile.new('blah.rb')
+        begin
+          tf.puts "class Blah"
+          400.times do
+            name = ('a'..'z').to_a.shuffle[0,8].join
+            tf.puts "def #{name}"
+            tf.puts 'cmd("INST COLLECT with TYPE NORMAL, DURATION 1.0")'
+            tf.puts 'wait_check("INST HEALTH_STATUS COLLECTS == 1", 5)'
+            tf.puts "end"
+          end
+          tf.puts "end"
+          tf.close
+          text = File.read(tf.path)
+          count = 0
+          start_time = Time.now
+          @lex.each_lexed_segment(text) do |segment, instrumentable, inside_begin, line_no|
+            count += 1
+          end
+          end_time = Time.now
+          expect(count).to eql 1602
+          expect(end_time - start_time).to be <= 1.0
+        ensure
+          tf.unlink
+        end
+      end
     end
   end
 end

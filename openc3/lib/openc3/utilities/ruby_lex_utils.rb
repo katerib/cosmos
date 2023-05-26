@@ -20,6 +20,7 @@
 # This file may also be used under the terms of a commercial license
 # if purchased from OpenC3, Inc.
 
+require 'irb'
 require 'irb/ruby-lex'
 require 'stringio'
 
@@ -39,6 +40,14 @@ class RubyLex
     @line_no = 1
     @prompt = nil
     initialize_input()
+  end
+
+  major, minor, _ = RUBY_VERSION.split('.')
+  if major == '3' and minor.to_i < 2
+    alias orig_lex lex
+    def lex(context)
+      orig_lex()
+    end
   end
 end
 $VERBOSE = old_verbose
@@ -80,18 +89,21 @@ class RubyLexUtils
 
   # Create a new RubyLex and StringIO to hold the text to operate on
   def initialize
+    # Taken from https://github.com/ruby/ruby/blob/master/test/irb/test_ruby_lex.rb#L827
+    IRB.init_config(nil)
+    IRB.conf[:VERBOSE] = false
+    # IRB.setup doesn't work because the command line options are passed
+    # and it doesn't recognize --warnings when we run rspec (see spec.rake)
+    # IRB.setup(__FILE__)
+    workspace = IRB::WorkSpace.new(binding)
+    @context = IRB::Context.new(nil, workspace)
+
     @lex    = RubyLex.new
     @lex_io = StringIO.new('')
   end
 
-  if RUBY_VERSION >= "3.0"
-    def ripper_lex_without_warning(code)
-      RubyLex.ripper_lex_without_warning(code)
-    end
-  else
-    def ripper_lex_without_warning(code)
-      @lex.ripper_lex_without_warning(code)
-    end
+  def ripper_lex_without_warning(code)
+    RubyLex.ripper_lex_without_warning(code)
   end
 
   # @param text [String]
@@ -99,7 +111,7 @@ class RubyLexUtils
   def contains_begin?(text)
     @lex.reinitialize
     @lex_io.string = text
-    @lex.set_input(@lex_io)
+    @lex.set_input(@lex_io, context: @context)
     tokens = ripper_lex_without_warning(text)
     tokens.each do |token|
       if token[1] == :on_kw and token[2] == 'begin'
@@ -114,7 +126,7 @@ class RubyLexUtils
   def contains_end?(text)
     @lex.reinitialize
     @lex_io.string = text
-    @lex.set_input(@lex_io)
+    @lex.set_input(@lex_io, context: @context)
     tokens = ripper_lex_without_warning(text)
     tokens.each do |token|
       if token[1] == :on_kw and token[2] == 'end'
@@ -129,7 +141,7 @@ class RubyLexUtils
   def contains_keyword?(text)
     @lex.reinitialize
     @lex_io.string = text
-    @lex.set_input(@lex_io)
+    @lex.set_input(@lex_io, context: @context)
     tokens = ripper_lex_without_warning(text)
     tokens.each do |token|
       if token[1] == :on_kw
@@ -149,7 +161,7 @@ class RubyLexUtils
   def contains_block_beginning?(text)
     @lex.reinitialize
     @lex_io.string = text
-    @lex.set_input(@lex_io)
+    @lex.set_input(@lex_io, context: @context)
     tokens = ripper_lex_without_warning(text)
     tokens.each do |token|
       if token[1] == :on_kw
@@ -166,7 +178,7 @@ class RubyLexUtils
   def continue_block?(text)
     @lex.reinitialize
     @lex_io.string = text
-    @lex.set_input(@lex_io)
+    @lex.set_input(@lex_io, context: @context)
     tokens = RubyLex.ripper_lex_without_warning(text)
     index = tokens.length - 1
     while index > 0
@@ -184,7 +196,7 @@ class RubyLexUtils
   def remove_comments(text, progress_dialog = nil)
     @lex.reinitialize
     @lex_io.string = text
-    @lex.set_input(@lex_io)
+    @lex.set_input(@lex_io, context: @context)
     comments_removed = ""
     token_count = 0
     progress = 0.0
@@ -218,44 +230,64 @@ class RubyLexUtils
     inside_begin = false
     lex = RubyLex.new
     lex_io = StringIO.new(text)
-    lex.set_input(lex_io)
+    lex.set_input(lex_io, context: @context)
     lex.line = ''
     line = ''
+    indent = 0
     continue_indent = nil
     begin_indent = nil
-    previous_indent = 0
+    previous_line_indent = 0
 
-    while lexed = lex.lex
-      #puts "lexed = #{lexed.chomp}, indent = #{lex.indent}, continue = #{lex.continue}"
+    while lexed = lex.lex(@context)
       lex.line_no += lexed.count("\n")
       lex.line.concat lexed
       line.concat lexed
-      if lex.continue
+
+      if continue_indent
+        indent = previous_line_indent + lex.indent
+      else
+        indent += lex.indent
+        lex.indent = 0
+      end
+
+      if inside_begin and indent < begin_indent
+        begin_indent = nil
+        inside_begin = false
+      end
+
+      # Uncomment the following to help with debugging
+      #puts
+      #puts '*' * 80
+      #puts lex.line
+      #puts "lexed = #{lexed.chomp}, indent (of next line) = #{indent}, actual lex.indent = #{lex.indent}, continue = #{lex.continue}, ltype = #{lex.ltype.inspect}, code_block_open = #{lex.code_block_open}, continue_indent = #{continue_indent.inspect}, begin_indent = #{begin_indent.inspect}"
+
+      # These lines put multiple lines together that are really one line
+      if lex.continue or lex.ltype
         if not continue_block?(lexed)
+          # Set the indent we should stop at
           unless continue_indent
-            if (lex.indent - previous_indent) > 1
-              continue_indent = lex.indent - 1
+            if (indent - previous_line_indent) > 1
+              continue_indent = indent - 1
             else
-              continue_indent = previous_indent
+              continue_indent = previous_line_indent
             end
           end
-          #puts "continue_indent = #{continue_indent}"
           next
         end
       elsif continue_indent
-        if lex.indent > continue_indent
+        if indent > continue_indent
+          # Still have more content
           next
         else
+          # Ready to yield this combined line
           yield line, !contains_keyword?(line), inside_begin, lex.exp_line_no
           line = ''
           lex.exp_line_no = lex.line_no
-          if lex.indent == 0
-            lex.line = ''
-          end
+          lex.line = ''
           next
         end
       end
-      previous_indent = lex.indent
+      previous_line_indent = indent
       continue_indent = nil
 
       # Detect the beginning and end of begin blocks so we can not catch exceptions there
@@ -265,14 +297,11 @@ class RubyLexUtils
           # Ignore
         else
           inside_begin = true
-          begin_indent = lex.indent unless begin_indent # Don't restart for nested begins
+          begin_indent = indent unless begin_indent # Don't restart for nested begins
         end
       end
 
-      if inside_begin and lex.indent < begin_indent
-        begin_indent = nil
-        inside_begin = false
-      end
+      # The following code does not care about indent
 
       loop do # loop to allow restarting for nested conditions
         # Yield blank lines and lonely else lines before the actual line
@@ -292,41 +321,15 @@ class RubyLexUtils
         end
 
         if contains_keyword?(line)
-          if contains_block_beginning?(line)
-            section = ''
-            line.each_line do |lexed_part|
-              section << lexed_part
-              if contains_block_beginning?(section)
-                yield section, false, inside_begin, lex.exp_line_no
-                break
-              end
-              lex.exp_line_no += 1
-            end
-            lex.exp_line_no += 1
-            remainder = line[(section.length)..-1]
-            line = remainder
-            next unless remainder.empty?
-          else
-            yield line, false, inside_begin, lex.exp_line_no
-          end
+          yield line, false, inside_begin, lex.exp_line_no
         elsif !line.empty?
-          num_left_brackets  = line.count('{')
-          num_right_brackets = line.count('}')
-          if num_left_brackets != num_right_brackets
-            # Don't instrument lines with unequal numbers of { and } brackets
-            yield line, false, inside_begin, lex.exp_line_no
-          else
-            yield line, true, inside_begin, lex.exp_line_no
-          end
+          yield line, true, inside_begin, lex.exp_line_no
         end
         line = ''
         lex.exp_line_no = lex.line_no
+        lex.line = ''
         break
       end # loop do
-
-      if lex.indent == 0
-        lex.line = ''
-      end
     end # while lexed
   end # def each_lexed_segment
 end

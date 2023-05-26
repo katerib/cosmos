@@ -53,26 +53,14 @@ module OpenC3
       end
     end
 
-    if RUBY_VERSION < "3"
-      # Delegate all unknown class methods to delegate to the instance
-      def self.method_missing(message, *args, &block)
-        self.instance.public_send(message, *args, &block)
-      end
+    # Delegate all unknown class methods to delegate to the instance
+    def self.method_missing(message, *args, **kwargs, &block)
+      self.instance.public_send(message, *args, **kwargs, &block)
+    end
 
-      # Delegate all unknown methods to redis through the @redis_pool
-      def method_missing(message, *args, &block)
-        @redis_pool.with { |redis| redis.public_send(message, *args, &block) }
-      end
-    else
-      # Delegate all unknown class methods to delegate to the instance
-      def self.method_missing(message, *args, **kwargs, &block)
-        self.instance.public_send(message, *args, **kwargs, &block)
-      end
-
-      # Delegate all unknown methods to redis through the @redis_pool
-      def method_missing(message, *args, **kwargs, &block)
-        @redis_pool.with { |redis| redis.public_send(message, *args, **kwargs, &block) }
-      end
+    # Delegate all unknown methods to redis through the @redis_pool
+    def method_missing(message, *args, **kwargs, &block)
+      @redis_pool.with { |redis| redis.public_send(message, *args, **kwargs, &block) }
     end
 
     def initialize(pool_size = 10)
@@ -91,15 +79,6 @@ module OpenC3
     ###########################################################################
     # Stream APIs
     ###########################################################################
-
-    def initialize_streams(topics)
-      @redis_pool.with do |redis|
-        topics.each do |topic|
-          # Create empty stream with maxlen 0
-          redis.xadd(topic, { a: 'b' }, maxlen: 0)
-        end
-      end
-    end
 
     def get_oldest_message(topic)
       @redis_pool.with do |redis|
@@ -159,6 +138,7 @@ module OpenC3
 
     unless $openc3_redis_cluster
       def read_topics(topics, offsets = nil, timeout_ms = 1000, count = nil)
+        return {} if topics.empty?
         Thread.current[:topic_offsets] ||= {}
         topic_offsets = Thread.current[:topic_offsets]
         begin
