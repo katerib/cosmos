@@ -1,13 +1,3 @@
-### Table Of Contents
-
-[Welcome to OpenC3 COSMOS](#welcome-to-openc3-cosmos)
-
-[Getting Started](#getting-started)
-
-[Contributing](#contributing)
-
-[Licence](#license)
-
 ## Welcome to OpenC3 COSMOS
 
 > "Open Source, Open Architecture - Command, Control and Communication"
@@ -19,6 +9,20 @@
 [![codecov](https://codecov.io/gh/OpenC3/cosmos/branch/master/graph/badge.svg?token=arrpMGT2RR)](https://codecov.io/gh/OpenC3/cosmos)
 
 [Documentation](https://openc3.com)
+
+### Table Of Contents
+
+[Welcome to OpenC3 COSMOS](#welcome-to-openc3-cosmos)
+
+[Description](#description)
+
+[Getting Started](#getting-started)
+
+[Contributing](#contributing)
+
+[Licence](#license)
+
+## Description
 
 OpenC3 COSMOS provides all the functionality needed to send commands to and receive data from one or more embedded systems referred to as "targets". Out of the box functionality includes: Telemetry Display, Telemetry Graphing, Operational and Test Scripting, Command Sending, Logging, Log File Playback, and more.
 
